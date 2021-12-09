@@ -1,0 +1,236 @@
+---
+title: "Pension Plans & Benchmarks"
+date: December 8, 2021
+author: "Truong Bui, Thuy Nguyen" 
+output: 
+  html_document:
+    toc: true
+    toc_float:
+      toc_collapsed: true
+    toc_depth: 3
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+library(tidyverse)
+library(lubridate)
+library(quantmod)
+library(PerformanceAnalytics)
+library(quadprog)
+```
+
+# Data Manipulation
+
+## Pension Data
+
+```{r pension data}
+# Import pension data
+d <- read.csv("ppd-data-latest-7.csv")
+
+pension_data <- d %>% 
+  filter(fy >= 2000) %>%
+  select(PlanName, PlanFullName, fy, fye, ActLiabilities_GASB, InvestmentReturn_1yr) %>% # Filter some key variables
+  mutate(PlanFullName = gsub("\x92", "'", PlanFullName), # Fix plans' full names
+         PlanName = gsub("\x92", "'", PlanName)) %>% 
+  mutate(fye = ymd(fye),
+         month = month(fye))
+head(pension_data)
+```
+
+## Benchmark Data
+```{r index prices}
+#Get index prices
+symbols <- c("SWTSX", "VBMFX")
+
+prices <- getSymbols(symbols,
+                     src = "yahoo",
+                     from = "1998-12-31",
+                     to = "2020-12-31",
+                     auto.assign = T,
+                     warnings = F) %>% 
+  map(~Ad(get(.))) %>% 
+  reduce(merge) %>% 
+  `colnames<-`(symbols)
+
+#Get yearly prices for months available in pension data only
+prices_monthly <- to.monthly(prices, OHLC = F)
+unique_month_pension <- unique((pension_data$month))
+unique_month <- unique_month_pension[!is.na(unique_month_pension)]
+prices_yearly <- prices_monthly[month(index(prices_monthly)) %in% unique_month]
+
+head(prices_yearly)
+```
+
+## Merging Pension & Benchmark Data
+
+```{r pension_index data}
+# Calculate annual returns for the individual securities
+stock_returns <- prices_yearly %>%
+  data.frame(date = index(.)) %>%
+  remove_rownames() %>%
+  mutate(fy = year(date), month = month(date)) %>% 
+  pivot_longer(cols = 1:2, names_to = "security", values_to = "prices") %>%
+  arrange(security, month, fy) %>% 
+  group_by(security, month) %>%
+  mutate(returns = prices/lag(prices) - 1) %>%
+  select(-prices, -date) %>%
+  pivot_wider(names_from = security, values_from = returns) %>% 
+  ungroup()
+
+#Join pension data with stock returns
+pension_index <- pension_data %>% 
+  left_join(stock_returns, by = c("fy", "month")) %>% 
+  select(-c(PlanFullName, fy, month, ActLiabilities_GASB)) 
+
+#write.csv(pension_index, "pension_index.csv")
+head(pension_index)
+```
+
+# Alabama Plan
+
+```{r Alabama ERS}
+alabama <- pension_index %>% 
+  filter(PlanName == "Alabama ERS") 
+head(alabama)
+```
+
+## Optimizing Portfolio Weights 
+
+Genetic linear model model with constraint imposed on coefficients: y ~ b1 * X1 + b2 * X2
+
+Subject to contraints: b1 + b2 = 1; b1 >= 0 AND b2 > 0
+
+Translated into our problem as: InvestmentReturn_1yr ~ b1 * SWTSX  + b2 * VBMFX
+
+
+```{r best fit}
+#document of the package here: https://cran.r-project.org/web/packages/quadprog/quadprog.pdf
+y_actual = matrix(alabama$InvestmentReturn_1yr)
+
+x1 = matrix(alabama$SWTSX)
+x2 = matrix(alabama$VBMFX)
+x = cbind(x1, x2)
+
+Dmat <- solve(chol(t(x) %*% x)) # matrix to be minimized
+Amat <- cbind(rep(1,2), diag(2)) # vector define constraint
+bvec <- c(1,rep(0,2)) #vector of b
+dvec <- t(y_actual) %*% x  # vector to be minimized
+
+result <- solve.QP(Dmat = Dmat, factorized = TRUE, dvec = dvec, Amat = Amat, bvec = bvec, meq = 1)
+
+
+alabama_portfolio_result <- alabama %>% 
+  add_column(b1_SWTSX = result$solution[1]) %>% 
+  add_column(b2_VBMFX = result$solution[2]) %>% 
+  mutate(portfolio_return = SWTSX*b1_SWTSX + VBMFX*b2_VBMFX) %>% 
+  
+  # sum of square total: (actual value - avarage of actual value)^2
+  mutate(sst = sum((InvestmentReturn_1yr - mean(InvestmentReturn_1yr))^2)) %>% 
+
+  # sum of square error: (actual value - predicted value (i.e. portfolio return))^2
+  mutate(sse = sum((InvestmentReturn_1yr - portfolio_return)^2)) %>% 
+
+  # r_squared
+  mutate(r_quared = 1 - (sse/sst))
+
+alabama_portfolio_result
+
+```
+## Comparison Result 
+
+```{r comparison result}
+# I can't believe R does not have a buit-in function for this. 
+
+geo_mean <- function(vector) {
+  vector <- vector + 1
+  r <- prod(vector)^(1/length(vector)) - 1
+  return(r)
+}
+
+comparison_result <- alabama_portfolio_result %>% 
+  #geomean
+  mutate(geomean_actual = geo_mean(InvestmentReturn_1yr)) %>% 
+  mutate(geomean_portfolio = geo_mean(portfolio_return)) %>% 
+  
+  # standard deviation (i.e. risk)
+  mutate(sd_actual = sd(InvestmentReturn_1yr)) %>% 
+  mutate(sd_portfolio = sd(portfolio_return))
+
+comparison_result
+```
+
+# Making a Function to Scale Up
+
+```{r pension_benchmark_comparison function}
+pension_benchmark_comparison <- function (planname) {
+  plan <- pension_index %>% filter(PlanName == planname)
+  
+# optimization
+  y_actual = matrix(plan$InvestmentReturn_1yr)
+
+  x1 = matrix(plan$SWTSX)
+  x2 = matrix(plan$VBMFX)
+  x = cbind(x1, x2)
+  
+  Dmat <- solve(chol(t(x) %*% x)) # matrix to be minimized
+  Amat <- cbind(rep(1,2), diag(2)) # vector define constraint
+  bvec <- c(1,rep(0,2)) #vector of b
+  dvec <- t(y_actual) %*% x  # vector to be minimized
+  
+  result <- solve.QP(Dmat = Dmat, factorized = TRUE, dvec = dvec, Amat = Amat, bvec = bvec, meq = 1)
+  
+  plan_result <- plan %>% 
+    add_column(b1_SWTSX = result$solution[1]) %>% 
+    add_column(b2_VBMFX = result$solution[2]) %>% 
+    mutate(portfolio_return = SWTSX*b1_SWTSX + VBMFX*b2_VBMFX) %>% 
+    
+    # sum of square total: (actual value - avarage of actual value)^2
+    mutate(sst = sum((InvestmentReturn_1yr - mean(InvestmentReturn_1yr))^2)) %>% 
+  
+    # sum of square error: (actual value - predicted value (i.e. portfolio return))^2
+    mutate(sse = sum((InvestmentReturn_1yr - portfolio_return)^2)) %>% 
+  
+    # r_squared
+    mutate(r_quared = 1 - (sse/sst))
+  
+  comparison_result <- plan_result %>% 
+  #geomean
+  mutate(geomean_actual = geo_mean(InvestmentReturn_1yr)) %>% 
+  mutate(geomean_portfolio = geo_mean(portfolio_return)) %>% 
+  
+  # standard deviation (i.e. risk)
+  mutate(sd_actual = sd(InvestmentReturn_1yr)) %>% 
+  mutate(sd_portfolio = sd(portfolio_return)) %>% 
+   
+  
+  # standard deviation (i.e. risk)
+  mutate(sd_actual = sd(InvestmentReturn_1yr)) %>% 
+  mutate(sd_portfolio = sd(portfolio_return))
+  return(comparison_result) 
+}
+
+```
+# Function Applied: California PERF
+```{r California}
+pension_benchmark_comparison("California PERF")
+```
+
+# Function Applied: South Dakota RS
+```{r South Dakota RS}
+pension_benchmark_comparison("South Dakota RS")
+```
+
+# Loop through all plans
+```{r}
+# Get a list of the first 5 plans
+plan_list <- (unique(pension_index$PlanName))[1:5]
+
+# Loop through each plan to produce result
+for (plan in plan_list) {
+  result <- pension_benchmark_comparison(plan)
+  print(result)
+}
+  
+```
+
