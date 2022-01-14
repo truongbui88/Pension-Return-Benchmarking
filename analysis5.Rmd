@@ -97,9 +97,9 @@ head(alabama)
 
 ## Optimizing Portfolio Weights 
 
-Genetic linear model model with constraint imposed on coefficients: y ~ b1 * X1 + b2 * X2
+Genetic linear model with constraint imposed on coefficients: y ~ b1 * X1 + b2 * X2
 
-Subject to contraints: b1 + b2 = 1; b1 >= 0 AND b2 > 0
+Subject to constraints: b1 + b2 = 1; b1 >= 0 AND b2 > 0
 
 Translated into our problem as: InvestmentReturn_1yr ~ b1 * SWTSX  + b2 * VBMFX
 
@@ -112,20 +112,39 @@ x1 = matrix(alabama$SWTSX)
 x2 = matrix(alabama$VBMFX)
 x = cbind(x1, x2)
 
-Dmat <- solve(chol(t(x) %*% x)) # matrix to be minimized
+Dmat <- solve(chol(t(x) %*% x)) # matrix to be minimized -why using solve(cho())
+
 Amat <- cbind(rep(1,2), diag(2)) # vector define constraint
-bvec <- c(1,rep(0,2)) #vector of b
+bvec <- c(1,rep(0,2)) #vector of b coefficient
 dvec <- t(y_actual) %*% x  # vector to be minimized
 
 result <- solve.QP(Dmat = Dmat, factorized = TRUE, dvec = dvec, Amat = Amat, bvec = bvec, meq = 1)
+result
 
+
+
+```
+```{r}
+Dmat2 <- (t(x) %*% x) # matrix to be minimized -why using solve(cho())
+
+Amat <- cbind(rep(1,2), diag(2)) # vector define constraint
+bvec <- c(1,rep(0,2)) #vector of b coefficient
+dvec <- t(y_actual) %*% x  # vector to be minimized
+
+result2 <- solve.QP(Dmat = Dmat2, dvec = dvec, Amat = Amat, bvec = bvec, meq = 1)
+result2
+```
+
+
+```{r}
+#apply the best fit result to alabama
 
 alabama_portfolio_result <- alabama %>% 
   add_column(b1_SWTSX = result$solution[1]) %>% 
   add_column(b2_VBMFX = result$solution[2]) %>% 
   mutate(portfolio_return = SWTSX*b1_SWTSX + VBMFX*b2_VBMFX) %>% 
   
-  # sum of square total: (actual value - avarage of actual value)^2
+  # sum of square total: (actual value - average of actual value)^2
   mutate(sst = sum((InvestmentReturn_1yr - mean(InvestmentReturn_1yr))^2)) %>% 
 
   # sum of square error: (actual value - predicted value (i.e. portfolio return))^2
@@ -140,7 +159,7 @@ alabama_portfolio_result
 ## Comparison Result 
 
 ```{r comparison result}
-# I can't believe R does not have a buit-in function for this. 
+# Write a function to calculate geomean (Can't believe R does not have a built-in function for this.) 
 
 geo_mean <- function(vector) {
   vector <- vector + 1
@@ -160,7 +179,7 @@ comparison_result <- alabama_portfolio_result %>%
 comparison_result
 ```
 
-# Making a Function to Scale Up
+# Write a Function to Scale Up
 
 ```{r pension_benchmark_comparison function}
 pension_benchmark_comparison <- function (planname) {
