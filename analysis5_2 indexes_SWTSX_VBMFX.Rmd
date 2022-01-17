@@ -1,5 +1,5 @@
 ---
-title: "Pension Plans & Benchmarks"
+title: "Pension Plans & Benchmarks SWTSX, VBMFX"
 date: December 8, 2021
 author: "Truong Bui, Thuy Nguyen" 
 output: 
@@ -26,7 +26,7 @@ library(quadprog)
 
 ```{r pension data}
 # Import pension data
-d <- read.csv("ppd-data-latest-7.csv")
+d <- rio::import(here::here("data", "ppd-data-latest-7.csv"))
 
 pension_data <- d %>% 
   filter(fy >= 2000) %>%
@@ -59,7 +59,7 @@ unique_month_pension <- unique((pension_data$month))
 unique_month <- unique_month_pension[!is.na(unique_month_pension)]
 prices_yearly <- prices_monthly[month(index(prices_monthly)) %in% unique_month]
 
-head(prices_yearly)
+(prices_yearly)
 ```
 
 ## Merging Pension & Benchmark Data
@@ -112,27 +112,26 @@ x1 = matrix(alabama$SWTSX)
 x2 = matrix(alabama$VBMFX)
 x = cbind(x1, x2)
 
-Dmat <- solve(chol(t(x) %*% x)) # matrix to be minimized -why using solve(cho())
+#method 1:
+# Dmat <- solve(chol(t(x) %*% x)) 
+# Amat <- cbind(rep(1,2), diag(2)) # vector define constraint
+# bvec <- c(1,rep(0,2)) #vector of b coefficient
+# dvec <- t(y_actual) %*% x  # vector to be minimized
+# result <- solve.QP(Dmat = Dmat, factorized = TRUE, 
+#                    dvec = dvec, Amat = Amat, bvec = bvec, meq = 1)
+# result
 
+
+#method 2: more elegant using R base function crossprod
+
+Dmat <- crossprod(x) # cross product: transpose x and x
 Amat <- cbind(rep(1,2), diag(2)) # vector define constraint
 bvec <- c(1,rep(0,2)) #vector of b coefficient
-dvec <- t(y_actual) %*% x  # vector to be minimized
+dvec <- crossprod(y_actual, x) # cross product: transpose y_actual and x
 
-result <- solve.QP(Dmat = Dmat, factorized = TRUE, dvec = dvec, Amat = Amat, bvec = bvec, meq = 1)
+result <- solve.QP(Dmat = Dmat, dvec = dvec, Amat = Amat, bvec = bvec, meq = 1)
 result
 
-
-
-```
-```{r}
-Dmat2 <- (t(x) %*% x) # matrix to be minimized -why using solve(cho())
-
-Amat <- cbind(rep(1,2), diag(2)) # vector define constraint
-bvec <- c(1,rep(0,2)) #vector of b coefficient
-dvec <- t(y_actual) %*% x  # vector to be minimized
-
-result2 <- solve.QP(Dmat = Dmat2, dvec = dvec, Amat = Amat, bvec = bvec, meq = 1)
-result2
 ```
 
 
