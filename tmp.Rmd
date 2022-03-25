@@ -1,0 +1,67 @@
+---
+title: "tmp"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Write a Function to Scale Up
+
+```{r pension_benchmark_comparison function}
+pension_benchmark_comparison <- function (planname) {
+  plan <- pension_index %>% filter(PlanName == planname)
+  
+# optimization
+
+  y_actual = matrix(plan$InvestmentReturn_1yr)
+
+  x1 = matrix(plan$acmi_exUS)
+  x2 = matrix(plan$russell3000_IWV)
+  x3 = matrix(plan$vanguardBond_VBTIX)
+  x = cbind(x1, x2, x3)
+
+  Dmat <- (t(x) %*% x)# matrix to be minimized -why using solve(chol())
+  
+  Amat <- cbind(rep(1,3), diag(3)) # vector define constraint
+  bvec <- c(1,rep(0,3)) #vector of b coefficient
+  dvec <- t(y_actual) %*% x  # vector to be minimized
+
+  result <- solve.QP(Dmat = Dmat, dvec = dvec, Amat = Amat, bvec = bvec, meq = 1)
+
+  plan_result <- plan %>% 
+  add_column(b1_acmi_exUS = result$solution[1]) %>% 
+  add_column(b2_russell3000_IWV = result$solution[2]) %>% 
+  add_column(b3_vanguardBond_VBTIX = result$solution[3]) %>% 
+  mutate(portfolio_return = acmi_exUS*b1_acmi_exUS + russell3000_IWV*b2_russell3000_IWV + 
+           vanguardBond_VBTIX*b3_vanguardBond_VBTIX) %>% 
+    
+    # sum of square total: (actual value - average of actual value)^2
+    mutate(sst = sum((InvestmentReturn_1yr - mean(InvestmentReturn_1yr))^2)) %>% 
+  
+    # sum of square error: (actual value - predicted value (i.e. portfolio return))^2
+    mutate(sse = sum((InvestmentReturn_1yr - portfolio_return)^2)) %>% 
+  
+    # r_squared
+    mutate(r_quared = 1 - (sse/sst))
+  
+  #comparison
+  comparison_result <- plan_result %>% 
+    
+  #geomean
+  mutate(geomean_actual = geo_mean(InvestmentReturn_1yr)) %>% 
+  mutate(geomean_portfolio = geo_mean(portfolio_return)) %>% 
+  
+  # standard deviation (i.e. risk)
+  mutate(sd_actual = sd(InvestmentReturn_1yr)) %>% 
+  mutate(sd_portfolio = sd(portfolio_return)) %>% 
+   
+  
+  # standard deviation (i.e. risk)
+  mutate(sd_actual = sd(InvestmentReturn_1yr)) %>% 
+  mutate(sd_portfolio = sd(portfolio_return))
+  return(comparison_result) 
+}
+
+```
