@@ -40,6 +40,9 @@ geo_mean <- function(vector) {
 ```
 
 
+Running an analysis of 10 years to check if the results are similar to this report by Ennis (Exhibit 5):
+https://richardmennis.com/blog/cost-performance-and-benchmark-bias-of-public-pension-funds-in-the-united-states-an-unflattering-por#_ftn2
+
 
 # Data 
 ## Pension
@@ -385,9 +388,10 @@ pension_index %>%
 plan_ennis <- c("Arizona SRS", "California PERF",
                 "Florida RS","Illinois SERS", "Illinois Teachers", "Iowa PERS", "Maine State and Teacher", "Minnesota GERF",
                 "Missouri State Employees", "New Jersey PERS", "New Mexico PERA", "New York State Teachers", "North Carolina Local Government",
-                "Ohio School Employees", "Oregon PERS", "Pennsylvania School Employees", "Rhode Island ERS", "South Carolina RS",
-                "South Dakota", "Virginia RS", 
-                "Texas Teachers", "Vermont Teachers", "Washington PERS 2/3")
+                "Ohio School Employees", "Oregon PERS", "Pennsylvania School Employees", "Rhode Island ERS", "South Carolina RS")
+  
+#              "South Dakota", "Virginia RS", 
+#                "Texas Teachers", "Vermont Teachers", "Washington PERS 2/3")
 
 for (plan in plan_ennis) {
   result <- comparison_plan_benchmark(apply_portfolio_to_plan(plan)) %>% 
