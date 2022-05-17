@@ -7,6 +7,32 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+
+```{r}
+library(pracma)
+
+set.seed(1234)
+
+# Test data
+X <- matrix(runif(300), ncol=3)
+Y <- X %*% c(0.2, 0.3, 0.5) + rnorm(100, sd=0.2)
+
+# Equality constraint: We want the sum of the coefficients to be 1.
+# I.e. Aeq x == beq  
+Aeq <- matrix(rep(1, ncol(X)), nrow= 1)
+beq <- c(1)
+
+# Lower and upper bounds of the parameters, i.e [0, 1]
+lb <- rep(0, ncol(X))
+ub <- rep(1, ncol(X))
+
+# And solve:
+lsqlincon(X, Y, Aeq= Aeq, beq= beq, lb= lb, ub= ub)
+
+[1] 0.1583139 0.3304708 0.5112153
+```
+
+
 # Write a Function to Scale Up
 
 ```{r pension_benchmark_comparison function}
