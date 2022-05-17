@@ -47,7 +47,7 @@ Except for the MSCI ACWI ex-U.S stocks, which is retrieved from [MSCI website](h
 
 *Note: iShares Russell 3000 ETF (IWV) and Vanguard Total Bond Market Index Fund Institutional Shares (VBTIX) use the first day of the month*
 
-### acwi_exUS_price
+### MSCI acwi_exUS_price
 ```{r acwi_exUS_price}
 # https://www.msci.com/end-of-day-data-regional
 acwi_exUS <- rio::import(here::here("data", "historyIndex.xls"), skip=6)

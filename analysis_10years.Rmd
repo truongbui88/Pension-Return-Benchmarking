@@ -1,0 +1,406 @@
+---
+title: "Pension Plans vs. Benchmarks - 10 Years"
+subtitle: "MSCI ACWI ex-U.S stocks, Russell 3000 ETF (IWV), Vanguard Total Bond Market Index Fund Institutional Shares (VBTIX)"
+date: May 15, 2021
+author: "Truong Bui, Thuy Nguyen" 
+output: 
+  html_document:
+    toc: true
+    toc_float:
+      toc_collapsed: true
+    toc_depth: 3
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+library(tidyverse)
+library(lubridate)
+library(quantmod)
+library(PerformanceAnalytics)
+library(quadprog)
+library(knitr)
+library(kableExtra)
+library(stringr)
+
+my_scroll_table <- function(df){
+
+  kable(df, "html") %>%
+  kable_styling() %>%
+  scroll_box(height = "500px", width = "800px")
+}
+
+## geo_mean
+#Can't believe R does not have a built-in function for this.
+geo_mean <- function(vector) {
+  vector <- vector + 1
+  r <- prod(vector)^(1/length(vector)) - 1
+  return(r)
+}
+```
+
+
+Running an analysis of 10 years to check if the results are similar to this report by Ennis (Exhibit 5):
+https://richardmennis.com/blog/cost-performance-and-benchmark-bias-of-public-pension-funds-in-the-united-states-an-unflattering-por#_ftn2
+
+
+# Data 
+## Pension
+```{r}
+d2 <- rio::import(here::here("data", "ppd-data-latest_may2022.csv")) # Following Ennis, Download Full dataset here https://publicplansdata.org/public-plans-database/download-full-data-set/#nav-1
+
+# Pension data 10yr investment return in 2020
+pension_data2 <- d2 %>% 
+  filter(fy > 2010 & fy < 2021) %>%
+  select(PlanName, PlanFullName, fy, fye, InvestmentReturn_1yr, InvestmentReturn_10yr) %>% # Filter some key variables
+  mutate(PlanFullName = gsub("\x92", "'", PlanFullName), # Fix plans' full names
+         PlanName = gsub("\x92", "'", PlanName)) %>% 
+  mutate(fye = ymd(fye),
+         month = month(fye)) 
+```
+
+
+## Benchmarks
+[Richard M. Ennis (2020)](https://richardmennis.com/blog/endowment-performance) used three public market indexes: 
+
+* Bloomberg Barclays U.S. Aggregate bonds, 
+* Russell 3000 stocks index
+* MSCI ACWI ex-U.S stocks.
+
+Except for the MSCI ACWI ex-U.S stocks, which is retrieved from [MSCI website](https://www.msci.com/end-of-day-data-regional), we use 2 other benchmarks for substitution:  
+
+* [iShares Russell 3000 ETF (IWV)](https://www.ftserussell.com/products/indices/russell-us)
+
+* [Vanguard Total Bond Market Index Fund Institutional Shares (VBTIX)](https://finance.yahoo.com/quote/VBTIX?p=VBTIX&.tsrc=fin-srch) 
+
+*Note: iShares Russell 3000 ETF (IWV) and Vanguard Total Bond Market Index Fund Institutional Shares (VBTIX) use the first day of the month*
+
+### MSCI acwi_exUS_price
+```{r acwi_exUS_price}
+# https://www.msci.com/end-of-day-data-regional
+acwi_exUS <- rio::import(here::here("data", "historyIndex_may2022.xls"), skip=6) 
+
+acwi_exUS_price <- acwi_exUS %>%  
+slice(1:264) %>% # last few rows are not numbers
+  rename("acwi_exUS" = `ACWI ex USA Standard (Large+Mid Cap)`) %>% 
+  mutate(acwi_exUS = as.numeric(acwi_exUS)) %>% 
+  mutate(Date = str_remove(Date, ",")) %>% 
+  mutate(Date = as.Date(Date, "%B%d%Y"),
+         month = month(Date), 
+         fy = year(Date)) %>% 
+  filter(Date <= "2021-06-30") %>% 
+  select(-Date) 
+
+head(acwi_exUS_price)
+```
+
+
+### russell3000_IWV_price
+```{r russell3000_IWV_price}
+#iShares Russell 3000 ETF (IWV)
+#https://finance.yahoo.com/quote/IWV/history?p=IWV
+russell3000_IWV <- rio::import(here::here("data", "IWV.csv"))
+
+russell3000_IWV_price <- russell3000_IWV %>% 
+    select(Date, `Adj Close`) %>% # get the Adj Close price
+    rename("russell3000_IWV" = `Adj Close`) %>% 
+    mutate(month = month(Date), 
+           fy = year(Date)) %>% 
+    filter(Date <= "2021-06-30")
+
+head(russell3000_IWV_price)
+```
+
+### vanguardBond_VBTIX_price
+```{r vanguardBond_VBTIX_price}
+#Vanguard Total Bond Market Index Fund Institutional Shares (VBTIX)
+
+vanguardBond_VBTIX <- rio::import(here::here("data", "VBTIX.csv"))
+
+vanguardBond_VBTIX_price <- vanguardBond_VBTIX %>% 
+    select(Date, `Adj Close`) %>% 
+  filter(Date >= "2000-06-01") %>% # pension data only has from 2000-06-01
+  rename("vanguardBond_VBTIX" = `Adj Close`) %>% 
+  mutate(month = month(Date), 
+         fy = year(Date)) %>% 
+  filter(Date <= "2021-06-30")
+
+head(vanguardBond_VBTIX_price)
+```
+
+
+## Joining data
+
+```{r price_year}
+index_price <- left_join(vanguardBond_VBTIX_price, russell3000_IWV_price) %>% 
+  left_join(acwi_exUS_price) %>% 
+  select(Date, month, fy, vanguardBond_VBTIX, russell3000_IWV, acwi_exUS)
+
+# only keep data of the months that Pension data has
+pension_month <- unique(pension_data2$month)
+
+price_year <- index_price %>% 
+  filter(month %in% pension_month) 
+
+my_scroll_table(head(price_year))
+```
+
+
+```{r stock_returns}
+# Calculate annual returns for the individual securities
+stock_returns <- price_year %>%
+  data.frame(date = index(.)) %>%
+  pivot_longer(cols = 4:6, 
+               names_to = "index", 
+               values_to = "price") %>%
+  arrange(index, month, fy) %>% 
+  group_by(index, month) %>%
+  mutate(returns = price/lag(price) - 1) %>%
+  select(-price, -date) %>%
+  pivot_wider(names_from = index, values_from = returns) %>% 
+  ungroup()
+
+stock_returns %>% head()
+```
+
+```{r pension_index}
+#Join pension data with stock returns
+pension_index <- pension_data2 %>% 
+  left_join(stock_returns, by = c("fy", "month")) %>% 
+  select(-c(PlanFullName, fy, month)) %>% drop_na()
+
+#write.csv(pension_index, "pension_index.csv")
+
+my_scroll_table(head(pension_index))
+```
+
+### Checking Plans' 10 years return against Ennis's Report 
+
+```{r Arizona SRS}
+
+arizona <- pension_index %>% 
+   filter(PlanName == "Arizona SRS") 
+ geo_mean(arizona$InvestmentReturn_1yr) # Yes, matched
+```
+
+
+```{r New York State Teachers}
+newyork_state <- pension_index %>% 
+  filter(PlanName == "New York State Teachers") 
+geo_mean(newyork_state$InvestmentReturn_1yr) # Yes, matched
+
+```
+
+
+```{r}
+pension_index %>% filter(str_detect(PlanName, "Vermont"))
+
+vermont <- pension_index %>% 
+  filter(PlanName == "Vermont Teachers") 
+
+geo_mean(vermont$InvestmentReturn_1yr) # NOT matched
+```
+
+
+```{r}
+pension_index %>% filter(str_detect(PlanName, "Texas"))
+
+texas <- pension_index %>%
+filter(PlanName == "Texas Teachers") # correct
+geo_mean(texas$InvestmentReturn_1yr)# correct
+
+```
+
+```{r}
+pension_index %>% filter(str_detect(PlanName, "Ohio"))
+ohio <- pension_index %>% 
+  filter(PlanName == "Ohio School Employees")
+geo_mean(ohio$InvestmentReturn_1yr) # not matched with Ennis's report
+```
+
+```{r}
+pension_index %>% filter(str_detect(PlanName, "Missouri"))
+missouri <- pension_index %>% 
+  filter(PlanName == "Missouri State Employees")
+geo_mean(missouri$InvestmentReturn_1yr) # Yes, matched
+```
+
+## Optimizing Portfolio Weights 
+
+
+```{r optimize, best fit}
+#document of the package here: https://cran.r-project.org/web/packages/quadprog/quadprog.pdf
+# other package Dyktra 2018: https://cran.r-project.org/web/packages/Dykstra/Dykstra.pdf
+# other: pracma, using lsqlincon: https://www.rdocumentation.org/packages/pracma/versions/1.9.9/topics/lsqlincon
+y_actual = matrix(arizona$InvestmentReturn_1yr)
+
+x1 = matrix(arizona$acwi_exUS)
+x2 = matrix(arizona$russell3000_IWV)
+x3 = matrix(arizona$vanguardBond_VBTIX)
+x = cbind(x1, x2, x3)
+
+#method 1: 
+# Dmat <- t(x) %*% x 
+# Amat <- cbind(rep(1,3), diag(3)) # vector define constraint
+# bvec <- c(1,rep(0,3)) #vector of b coefficient
+# dvec <- t(y_actual) %*% x  # vector to be minimized: product of transpose y and x
+# result <- solve.QP(Dmat = Dmat, dvec = dvec, Amat = Amat, bvec = bvec, meq = 1)
+# result
+
+#method 2: more elegant using R base function crossprod
+Dmat <- crossprod(x)
+dvec <- crossprod(y_actual, x)  # vector to be minimized: product:transpose y_actual and x
+Amat <- cbind(rep(1,3), diag(3)) # vector define constraint
+bvec <- c(1, 0, 0, 0) #vector of b coefficient; meq = 1 is equality constraint: coefs sum to 1
+
+result <- solve.QP(Dmat = Dmat, dvec = dvec, Amat = Amat, bvec = bvec, meq = 1) 
+result
+```
+## Apply the best fit solution to Arizona
+
+```{r}
+#apply the best fit result to alabama
+arizona_portfolio_result <- arizona %>% 
+  add_column(b1_acwi_exUS = result$solution[1]) %>% 
+  add_column(b2_russell3000_IWV = result$solution[2]) %>% 
+  add_column(b3_vanguardBond_VBTIX = result$solution[3]) %>% 
+  mutate(portfolio_return = acwi_exUS*b1_acwi_exUS + russell3000_IWV*b2_russell3000_IWV + 
+           vanguardBond_VBTIX*b3_vanguardBond_VBTIX) %>% 
+  
+  # sum of square total: (actual value - average of actual value)^2
+  mutate(sst = sum((InvestmentReturn_1yr - mean(InvestmentReturn_1yr))^2)) %>% 
+
+  # sum of square error: (actual value - predicted value (i.e. portfolio return))^2
+  mutate(sse = sum((InvestmentReturn_1yr - portfolio_return)^2)) %>% 
+
+  # r_squared
+  mutate(r_squared = 1 - (sse/sst))
+
+my_scroll_table(head(arizona_portfolio_result))
+```
+
+# Writing functions to generalize 
+
+## optimize_beta 
+```{r optimize_beta function}
+
+optimize_beta <- function(planName){
+
+  df <- pension_index %>% 
+  filter(PlanName == planName) 
+  
+y_actual = matrix(df$InvestmentReturn_1yr)
+x1 = matrix(df$acwi_exUS)
+x2 = matrix(df$russell3000_IWV)
+x3 = matrix(df$vanguardBond_VBTIX)
+x = cbind(x1, x2, x3)
+
+Dmat <- crossprod(x)
+dvec <- crossprod(y_actual, x)
+Amat <- cbind(rep(1,3), diag(3)) 
+bvec <- c(1, 0, 0, 0) 
+dvec <- t(y_actual) %*% x  
+result <- solve.QP(Dmat = Dmat, dvec = dvec, Amat = Amat, bvec = bvec, meq = 1)
+
+return(result)
+  
+}
+
+optimize_beta("Arizona SRS")
+
+```
+
+## apply_portfolio_to_plan
+```{r apply_portfolio_to_plan function}
+
+apply_portfolio_to_plan <- function (planName) {
+  
+  plan <- pension_index %>% 
+  filter(PlanName == planName) 
+  
+  result <- optimize_beta(planName)
+  
+  portfolio_result <- plan %>% 
+  add_column(b1_acwi_exUS = result$solution[1]) %>% 
+  add_column(b2_russell3000_IWV = result$solution[2]) %>% 
+  add_column(b3_vanguardBond_VBTIX = result$solution[3]) %>% 
+  mutate(portfolio_return = acwi_exUS*b1_acwi_exUS + russell3000_IWV*b2_russell3000_IWV + 
+           vanguardBond_VBTIX*b3_vanguardBond_VBTIX) %>% 
+  
+  # sum of square total: (actual value - average of actual value)^2
+  mutate(sst = sum((InvestmentReturn_1yr - mean(InvestmentReturn_1yr))^2)) %>% 
+
+  # sum of square error: (actual value - predicted value (i.e. portfolio return))^2
+  mutate(sse = sum((InvestmentReturn_1yr - portfolio_return)^2)) %>% 
+
+  # r_squared
+  mutate(r_squared = 1 - (sse/sst))
+
+ return(portfolio_result)
+  
+}
+
+apply_portfolio_to_plan("Arizona SRS") %>% head()
+```
+
+
+## comparison_result 
+
+```{r comparison_result function}
+
+comparison_plan_benchmark <- function(df) {
+  
+comparison_result <- df %>% 
+  
+  #geomean
+  mutate(geomean_actual = geo_mean(InvestmentReturn_1yr)) %>% 
+  mutate(geomean_portfolio = geo_mean(portfolio_return)) %>% 
+  
+  # standard deviation (i.e. risk)
+  mutate(sd_actual = sd(InvestmentReturn_1yr)) %>% 
+  mutate(sd_portfolio = sd(portfolio_return))
+
+return(comparison_result)
+}
+
+#my_scroll_table(head(comparison_plan_benchmark(apply_portfolio_to_plan("Arizona SRS"))))
+```
+
+## Checking against Exhibit 5 in Ennis's report
+```{r}
+comparison_plan_benchmark(apply_portfolio_to_plan("Arizona SRS")) %>% select(PlanName, geomean_actual, geomean_portfolio,r_squared)
+```
+
+# Applying the function - Case testing
+
+Applying the function to examine individual pension plans. 
+```{r}
+pension_index %>% 
+  filter(str_detect(PlanName, "Washington"))
+```
+
+
+
+```{r}
+
+# Note: NOT correct 10 yr return: "South Dakota", "Ohio School Employees", "Vermont Teachers"
+
+plan_ennis <- c("Arizona SRS", "California PERF",
+                "Florida RS","Illinois SERS", "Illinois Teachers", "Iowa PERS", "Maine State and Teacher", "Minnesota GERF",
+                "Missouri State Employees", "New Jersey PERS", "New Mexico PERA", "New York State Teachers", "North Carolina Local Government",
+                "Ohio School Employees", "Oregon PERS", "Pennsylvania School Employees", "Rhode Island ERS", "South Carolina RS")
+  
+#              "South Dakota", "Virginia RS", 
+#                "Texas Teachers", "Vermont Teachers", "Washington PERS 2/3")
+
+for (plan in plan_ennis) {
+  result <- comparison_plan_benchmark(apply_portfolio_to_plan(plan)) %>% 
+    select(PlanName, geomean_actual, geomean_portfolio,r_squared)
+  print(result)
+}
+
+```
+
+
+
+
