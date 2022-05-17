@@ -171,7 +171,7 @@ pension_index <- pension_data2 %>%
 my_scroll_table(head(pension_index))
 ```
 
-### Checking Plans' return against Ennis's Report 
+### Checking Plans' 10 years return against Ennis's Report 
 
 ```{r Arizona SRS}
 
@@ -184,7 +184,6 @@ arizona <- pension_index %>%
 ```{r New York State Teachers}
 newyork_state <- pension_index %>% 
   filter(PlanName == "New York State Teachers") 
-
 geo_mean(newyork_state$InvestmentReturn_1yr) # Yes, matched
 
 ```
@@ -205,7 +204,6 @@ pension_index %>% filter(str_detect(PlanName, "Texas"))
 
 texas <- pension_index %>%
 filter(PlanName == "Texas Teachers") # correct
-
 geo_mean(texas$InvestmentReturn_1yr)# correct
 
 ```
@@ -214,8 +212,6 @@ geo_mean(texas$InvestmentReturn_1yr)# correct
 pension_index %>% filter(str_detect(PlanName, "Ohio"))
 ohio <- pension_index %>% 
   filter(PlanName == "Ohio School Employees")
-
-
 geo_mean(ohio$InvestmentReturn_1yr) # not matched with Ennis's report
 ```
 
@@ -223,7 +219,6 @@ geo_mean(ohio$InvestmentReturn_1yr) # not matched with Ennis's report
 pension_index %>% filter(str_detect(PlanName, "Missouri"))
 missouri <- pension_index %>% 
   filter(PlanName == "Missouri State Employees")
-
 geo_mean(missouri$InvestmentReturn_1yr) # Yes, matched
 ```
 
@@ -385,7 +380,7 @@ pension_index %>%
 
 ```{r}
 
-# Note: NOT correct 10 yr return: "South Dakota", 
+# Note: NOT correct 10 yr return: "South Dakota", "Ohio School Employees", "Vermont Teachers"
 
 plan_ennis <- c("Arizona SRS", "California PERF",
                 "Florida RS","Illinois SERS", "Illinois Teachers", "Iowa PERS", "Maine State and Teacher", "Minnesota GERF",
@@ -402,46 +397,6 @@ for (plan in plan_ennis) {
 
 ```
 
-
-# Applying the function to all pension plans
-
-## Pension plans got processed
-```{r}
-# Get a list of the first 5 plans
-plan_list <- (unique(pension_index$PlanName))
-
-# Loop through each plan to produce result
-all_plans = list()
-
-for (plan in plan_list) {
-  skip_to_next <- FALSE # initialize FALSE
-  
-  tryCatch(
-  result <- comparison_plan_benchmark(apply_portfolio_to_plan(plan)),
-  
-  error = function(e) { 
-    skip_to_next <<- TRUE} # if get an error, trigger to TRUE 
-  )
-  
-  all_plans[[plan]] <- result
-  if(skip_to_next) { next } # just skip that item and go to the next
-}
-
-final_result <- bind_rows(all_plans)  
-
-my_scroll_table(head(final_result))
-#write_csv(final_result, "final_result.csv")
-```
-## Pension plans do not get processed
-
-The subset of any left over that the function above does not process. 
-
-
-```{r}
-error_plans <- setdiff(plan_list, unique(final_result$PlanName))
-error_plans
-
-```
 
 
 
